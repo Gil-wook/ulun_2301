@@ -1,0 +1,256 @@
+name: Build uLaunch 23.0.1 (experimental)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ulaunch-build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Reproduce the current source-side port. These are public source revisions,
+  # not console firmware, keys, or credentials.
+  SOURCE_REV: 6da94f9164f5fa61380010008270457f95ff4b04
+  ATMOSPHERE_LIBS_REV: cf48d23375cf36742876f4b014971b2ebabc6dc8
+  LIBNX_REV: b156b4774fb2df7b93402169509266da7547fc4c
+  SDL2_RECIPE_REV: 0ae8790f6e092cf8df937d143e70a785f7e27997
+  GIT_TERMINAL_PROMPT: "0"
+  DEBIAN_FRONTEND: noninteractive
+  TZ: UTC
+
+jobs:
+  build:
+    name: Cross-compile the experimental port
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # Official devkitPro image (20260219), pinned by image digest.
+    # This container runs on GitHub, not inside Replit or on your PC.
+    container:
+      image: devkitpro/devkita64@sha256:1fc388c3a0d34bd2045a6dadcb1020e069d5f876a187fd705de14b4440c00282
+    defaults:
+      run:
+        shell: bash --noprofile --norc -eo pipefail {0}
+
+    steps:
+      - name: Prepare SDK and build utilities
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee "$GITHUB_WORKSPACE/build-logs/01-sdk.log") 2>&1
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git ca-certificates curl python3 python3-requests python-is-python3 \
+            zip xz-utils patch autoconf automake libtool pkgconf file build-essential
+          # Keep the official SDK packages consistent; do not disable signature checks.
+          dkp-pacman -Syu --noconfirm
+          dkp-pacman -S --needed --noconfirm \
+            switch-dev switch-portlibs dkp-toolchain-vars
+          test -r /opt/devkitpro/devkita64.sh
+          test -r /opt/devkitpro/switchvars.sh
+          dkp-pacman -Q > "$GITHUB_WORKSPACE/build-logs/sdk-packages.txt"
+          python3 -c 'import requests'
+
+      - name: Fetch pinned official sources and apply the port baseline
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/build-logs/02-source.log") 2>&1
+          cd "$GITHUB_WORKSPACE"
+          git init source
+          git -C source remote add origin https://github.com/XorTroll/uLaunch.git
+          git -C source fetch --depth=1 origin "$SOURCE_REV"
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_REV"
+          git -C source submodule update --init --recursive --depth=1
+          git -C source/libs/Atmosphere-libs fetch --depth=1 origin "$ATMOSPHERE_LIBS_REV"
+          git -C source/libs/Atmosphere-libs checkout --detach FETCH_HEAD
+          test "$(git -C source/libs/Atmosphere-libs rev-parse HEAD)" = "$ATMOSPHERE_LIBS_REV"
+          git init source/libnx
+          git -C source/libnx remote add origin https://github.com/switchbrew/libnx.git
+          git -C source/libnx fetch --depth=1 origin "$LIBNX_REV"
+          git -C source/libnx checkout --detach FETCH_HEAD
+          test "$(git -C source/libnx rev-parse HEAD)" = "$LIBNX_REV"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          path = Path("source/Makefile")
+          text, count = re.subn(
+              r"(?m)^VERSION_MICRO[ \t]*:=[ \t]*5[ \t]*$",
+              "VERSION_MICRO\t:=\t6",
+              path.read_text(),
+          )
+          if count != 1:
+              raise SystemExit("Unexpected upstream version: port baseline was not applied")
+          path.write_text(text)
+          PY
+          git -C source diff > "$GITHUB_WORKSPACE/build-logs/port-baseline.patch"
+          git -C source submodule status --recursive \
+            > "$GITHUB_WORKSPACE/build-logs/source-revisions.txt"
+
+      - name: Build and install the pinned libnx SDK
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/build-logs/03-libnx.log") 2>&1
+          source /opt/devkitpro/devkita64.sh
+          cd "$GITHUB_WORKSPACE/source/libnx"
+          make -j2
+          make install
+          # uLaunch also uses this source tree as LIBNX, as upstream CI does.
+          test -d nx/external/bsd/include
+          cp -a nx/external/bsd/include/. nx/include/
+          test -s nx/lib/libnx.a
+
+      - name: Build the upstream-recommended SDL2 audio revision
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/build-logs/04-sdl2.log") 2>&1
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p sdl-inputs sdl-build
+          curl --fail --location --retry 3 \
+            https://libsdl.org/release/SDL2-2.28.5.tar.gz \
+            --output sdl-inputs/SDL2-2.28.5.tar.gz
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/devkitPro/pacman-packages/$SDL2_RECIPE_REV/switch/SDL2/SDL2-2.28.5.patch" \
+            --output sdl-inputs/SDL2-2.28.5.patch
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/devkitPro/pacman-packages/$SDL2_RECIPE_REV/switch/SDL2/PKGBUILD" \
+            --output sdl-inputs/PKGBUILD
+          (
+            cd sdl-inputs
+            printf '%s\n' \
+              "332cb37d0be20cb9541739c61f79bae5a477427d79ae85e352089afdaf6666e4  SDL2-2.28.5.tar.gz" \
+              "f5cf0336980c88559594cc30205022bdcf84be00e437e8b28f43a15dcbe0a58d  SDL2-2.28.5.patch" \
+              | sha256sum --check --strict
+          )
+          tar -xzf sdl-inputs/SDL2-2.28.5.tar.gz -C sdl-build
+          cd sdl-build/SDL2-2.28.5
+          source /opt/devkitpro/switchvars.sh
+          patch -p1 < "$GITHUB_WORKSPACE/sdl-inputs/SDL2-2.28.5.patch"
+          ./configure --prefix="$PORTLIBS_PREFIX" --host=aarch64-none-elf \
+            --disable-shared --enable-static --enable-audio --enable-joystick \
+            --disable-power --disable-filesystem --enable-cpuinfo \
+            --enable-pthreads --enable-timers --enable-video
+          make -j2
+          make install
+
+      - name: Generate result headers without GitHub API requests
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/build-logs/05-results.log") 2>&1
+          cd "$GITHUB_WORKSPACE/source"
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path("arc").resolve()))
+          import arc_db_gen
+          headers = sorted(
+              Path("libs/Atmosphere-libs/libvapours/include/vapours/results")
+              .glob("*_results.hpp")
+          )
+          if not headers:
+              raise SystemExit("Pinned Atmosphere result headers are missing")
+          # The upstream generator otherwise reads a moving GitHub branch via API.
+          arc_db_gen.query_ams_rc_hpps = lambda: headers
+          arc_db_gen.load_remote_rc_hpp = lambda path: path.read_text()
+          custom = [
+              str(path) for path in sorted(Path("arc/default_rc_hpps").iterdir())
+              if path.is_file()
+          ]
+          custom.append("libs/uCommon/include/ul/ul_Results.rc.hpp")
+          arc_db_gen.generate_dbs(True, custom)
+          PY
+          python3 arc/arc.py gen_cpp rc UL libs/uCommon/include/ul/ul_Results.gen.hpp
+          test -s libs/uCommon/include/ul/ul_Results.gen.hpp
+
+      - name: Build the four Switch components
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/build-logs/06-ulaunch.log") 2>&1
+          source /opt/devkitpro/devkita64.sh
+          export PATH="/opt/devkitpro/portlibs/switch/bin:$PATH"
+          cd "$GITHUB_WORKSPACE/source"
+          # ARC was generated above. Build shared libraries first and components
+          # in sequence to avoid different sub-makes writing the same library.
+          make -j2 -o arc LIBNX="$PWD/libnx/nx" libs
+          for target in usystem uloader umenu umanager; do
+            make -j2 -o arc -o libs LIBNX="$PWD/libnx/nx" "$target"
+          done
+
+      - name: Validate and package the development build and source
+        id: package
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/build-logs/07-package.log") 2>&1
+          cd "$GITHUB_WORKSPACE"
+          for file in \
+            atmosphere/contents/0100000000001000/exefs.nsp \
+            ulaunch/bin/uSystem/exefs.nsp \
+            ulaunch/bin/uMenu/main ulaunch/bin/uMenu/main.npdm \
+            ulaunch/bin/uMenu/romfs.bin \
+            ulaunch/bin/uLoader/applet/main ulaunch/bin/uLoader/applet/main.npdm \
+            ulaunch/bin/uLoader/application/main ulaunch/bin/uLoader/application/main.npdm \
+            switch/uManager.nro; do
+            test -s "source/SdOut/$file" || { echo "Missing output: $file"; exit 1; }
+          done
+          mkdir -p release
+          {
+            printf '%s\n' \
+              "UNOFFICIAL uLaunch 1.2.6 development build" \
+              "Target: firmware 23.0.1 / Atmosphere 1.12.1+" \
+              "A successful compile does NOT establish console compatibility." \
+              "No on-console runtime testing has been performed by this workflow." \
+              "Do not overwrite your only SD card backup with this experimental build." \
+              "Only the four Switch components are included; uScreen/uDesigner are not built." \
+              "Corresponding source and license notices are in the source archive from this run." \
+              "SOURCE_REV=$SOURCE_REV" "ATMOSPHERE_LIBS_REV=$ATMOSPHERE_LIBS_REV" \
+              "LIBNX_REV=$LIBNX_REV" "SDL2_RECIPE_REV=$SDL2_RECIPE_REV" \
+              "SDL2=2.28.5-3 (rebuilt from upstream recipe)" \
+              "SDK packages are updated at run time; see sdk-packages.txt for exact versions." \
+              "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            date -u '+Build time: %Y-%m-%dT%H:%M:%SZ'
+            /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc --version | head -n1
+          } > release/BUILD-INFO.txt
+          cp release/BUILD-INFO.txt source/SdOut/
+          cp source/LICENSE source/SdOut/LICENSE-uLaunch.txt
+          cp source/nx-hbloader.LICENSE.md source/SdOut/
+          cp build-logs/sdk-packages.txt release/
+          cp build-logs/port-baseline.patch release/
+          (cd source/SdOut && zip -qr "$GITHUB_WORKSPACE/release/uLaunch-23.0.1-dev.zip" .)
+          tar --exclude-vcs --exclude='*/build' --exclude='*/out' \
+            --exclude='*/SdOut' --exclude='*.o' --exclude='*.a' --exclude='*.d' \
+            --exclude='*.elf' --exclude='*.nsp' --exclude='*.nso' \
+            --exclude='*.nro' --exclude='*.npdm' --exclude='*/__pycache__' \
+            -czf release/uLaunch-23.0.1-dev-source.tar.gz source sdl-inputs
+          (cd release && sha256sum uLaunch-23.0.1-dev.zip \
+            uLaunch-23.0.1-dev-source.tar.gz > SHA256SUMS.txt)
+
+      - name: Downloadable build and corresponding source
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: uLaunch-23.0.1-dev-${{ github.run_id }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Downloadable build logs (also on failure)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-logs-${{ github.run_id }}
+          path: build-logs/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Show result and verification limits
+        if: always()
+        env:
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+        run: |
+          {
+            echo "## uLaunch 23.0.1 experimental build"
+            if [[ "$PACKAGE_OUTCOME" == "success" ]]; then
+              echo "Build and packaging completed. Download the uLaunch artifact below."
+              echo "It includes the build ZIP, corresponding source, checksums, and SDK versions."
+            else
+              echo "No completed install package is available. Open the failed step or download build-logs."
+            fi
+            echo
+            echo "**Compile success is not proof of compatibility. Console runtime testing is still required.**"
+            echo "This workflow does not build, install, or update console firmware."
+          } >> "$GITHUB_STEP_SUMMARY"
