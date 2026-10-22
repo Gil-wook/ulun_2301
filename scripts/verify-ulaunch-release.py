@@ -111,7 +111,11 @@ def verify(directory, run_url):
         missing = SOURCE_FILES - files
         require(not missing, f"Incomplete corresponding source: {sorted(missing)}")
         require(
-            not any(PurePosixPath(name).suffix in {".o", ".a", ".elf", ".nsp", ".nso", ".nro"} for name in files),
+            not any(
+                PurePosixPath(name).suffix in {".o", ".a", ".elf", ".nsp", ".nso", ".nro"}
+                or any(part.endswith((".gch", ".pch")) for part in PurePosixPath(name).parts)
+                for name in files
+            ),
             "Source archive contains generated binaries",
         )
         # Confirm that the corresponding source carries the development version.

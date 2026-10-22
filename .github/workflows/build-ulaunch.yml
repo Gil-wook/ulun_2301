@@ -216,6 +216,7 @@ jobs:
           (cd source/SdOut && zip -qr "$GITHUB_WORKSPACE/release/uLaunch-23.0.1-dev.zip" .)
           tar --exclude-vcs --exclude='*/build' --exclude='*/out' \
             --exclude='*/SdOut' --exclude='*.o' --exclude='*.a' --exclude='*.d' \
+            --exclude='*.gch' --exclude='*.pch' \
             --exclude='*.elf' --exclude='*.nsp' --exclude='*.nso' \
             --exclude='*.nro' --exclude='*.npdm' --exclude='*/__pycache__' \
             -czf release/uLaunch-23.0.1-dev-source.tar.gz source sdl-inputs

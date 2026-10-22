@@ -102,6 +102,9 @@ Replit 안의 `third_party/ulaunch-source`를 업로드하거나 빌드하는 �
 
 개발용 도구 `scripts/verify-ulaunch-release.py`는 다운로드한 Artifacts의 바깥쪽 ZIP을 푼 폴더를 검사합니다.
 Python 3.11 이상에서 추가 패키지 없이 실행할 수 있으며, 빌드 파일을 실행하거나 소스 압축을 풀지는 않습니다.
+첫 성공 실행의 GitHub 원본 소스에는 생성된 `.gch` 캐시가 포함되어 있으므로 최신 검사 도구는 이를 거부합니다.
+전달용 전체 묶음에는 캐시만 제거하고 체크섬을 갱신한 정리본이 들어 있습니다. 이후 워크플로는 캐시를 제외합니다.
+정리 전후 소스 체크섬은 [검증 기록](build-verification.ko.md)에 구분했습니다.
 
 ```sh
 python3 scripts/verify-ulaunch-release.py 다운로드폴더 \

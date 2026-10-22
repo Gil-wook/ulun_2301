@@ -100,6 +100,12 @@ class ReleaseVerificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Source version"):
             release.verify(self.directory, RUN)
 
+    def test_precompiled_header_cache(self):
+        self.sources["source/include/header.hpp.gch/nintendo_nx_release"] = b"cache"
+        self.write_archives()
+        with self.assertRaisesRegex(ValueError, "contains generated binaries"):
+            release.verify(self.directory, RUN)
+
 
 if __name__ == "__main__":
     unittest.main()
