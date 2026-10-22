@@ -342,8 +342,7 @@ def apply(source: Path) -> None:
            (manifest_json.contains("release") && !manifest_json["release"].is_string())) {
             UL_LOG_WARN("Invalid field type in theme manifest '%s'", theme_path.c_str());
             return ResultInvalidJson;
-        }
-        """,
+        }""",
                 "non-throwing and validated theme manifest parsing",
             ),
         ],
