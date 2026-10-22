@@ -35,6 +35,12 @@ jobs:
         shell: bash --noprofile --norc -eo pipefail {0}
 
     steps:
+      - name: Check out this repository's port diagnostics patch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: port-patches
+          persist-credentials: false
+
       - name: Prepare SDK and build utilities
         run: |
           mkdir -p "$GITHUB_WORKSPACE/build-logs"
@@ -86,6 +92,12 @@ jobs:
               raise SystemExit("Unexpected upstream version: port baseline was not applied")
           path.write_text(text)
           PY
+          python3 "$GITHUB_WORKSPACE/port-patches/scripts/apply-ulaunch-boot-trace.py" \
+            "$GITHUB_WORKSPACE/source"
+          mkdir -p source/port-patches
+          cp port-patches/scripts/apply-ulaunch-boot-trace.py \
+            source/port-patches/apply-ulaunch-boot-trace.py
+          git -c core.whitespace=cr-at-eol -C source diff --check
           git -C source diff > "$GITHUB_WORKSPACE/build-logs/port-baseline.patch"
           git -C source submodule status --recursive \
             > "$GITHUB_WORKSPACE/build-logs/source-revisions.txt"
@@ -190,6 +202,15 @@ jobs:
             switch/uManager.nro; do
             test -s "source/SdOut/$file" || { echo "Missing output: $file"; exit 1; }
           done
+          grep -q 'BOOTTRACE component=uSystem stage=menu-launch.begin' \
+            source/projects/uSystem/source/main.cpp
+          grep -q 'BOOTTRACE component=uMenu stage=menu-show.fade-in' \
+            source/projects/uMenu/source/main.cpp
+          grep -Fq 'JSON::parse(json_str, nullptr, false)' \
+            source/libs/uCommon/source/ul/util/util_Json.cpp
+          grep -Fq 'JSON::parse(manifest_json_str, nullptr, false)' \
+            source/libs/uCommon/source/ul/cfg/cfg_Config.cpp
+          test -s source/port-patches/apply-ulaunch-boot-trace.py
           mkdir -p release
           {
             printf '%s\n' \
@@ -198,6 +219,9 @@ jobs:
               "A successful compile does NOT establish console compatibility." \
               "No on-console runtime testing has been performed by this workflow." \
               "Do not overwrite your only SD card backup with this experimental build." \
+              "Startup checkpoints are written to /ulaunch/log_uSystem.log and /ulaunch/log_uMenu.log after SD logging starts." \
+              "Failures before uSystem's SD mount or before uMenu's SD mount may still leave no uLaunch log." \
+              "Malformed or wrong-shaped JSON is rejected without aborting the menu; no SD user data is deleted by this fix." \
               "Only the four Switch components are included; uScreen/uDesigner are not built." \
               "Corresponding source and license notices are in the source archive from this run." \
               "SOURCE_REV=$SOURCE_REV" "ATMOSPHERE_LIBS_REV=$ATMOSPHERE_LIBS_REV" \
