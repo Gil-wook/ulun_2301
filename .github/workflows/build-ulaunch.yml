@@ -43,10 +43,13 @@ jobs:
           apt-get install -y --no-install-recommends \
             git ca-certificates curl python3 python3-requests python-is-python3 \
             zip xz-utils patch autoconf automake libtool pkgconf file build-essential
-          # Keep the official SDK packages consistent; do not disable signature checks.
-          dkp-pacman -Syu --noconfirm
-          dkp-pacman -S --needed --noconfirm \
-            switch-dev switch-portlibs dkp-toolchain-vars
+          # The digest-pinned official image already includes these SDK groups.
+          # Use its coherent snapshot instead of relying on the live package
+          # server (which can return 403). Missing SDK inputs are a hard error.
+          # Never disable package signature checks to work around that error.
+          dkp-pacman -Qg switch-dev
+          dkp-pacman -Qg switch-portlibs
+          dkp-pacman -Q dkp-toolchain-vars
           test -r /opt/devkitpro/devkita64.sh
           test -r /opt/devkitpro/switchvars.sh
           dkp-pacman -Q > "$GITHUB_WORKSPACE/build-logs/sdk-packages.txt"
@@ -200,7 +203,7 @@ jobs:
               "SOURCE_REV=$SOURCE_REV" "ATMOSPHERE_LIBS_REV=$ATMOSPHERE_LIBS_REV" \
               "LIBNX_REV=$LIBNX_REV" "SDL2_RECIPE_REV=$SDL2_RECIPE_REV" \
               "SDL2=2.28.5-3 (rebuilt from upstream recipe)" \
-              "SDK packages are updated at run time; see sdk-packages.txt for exact versions." \
+              "SDK packages use the digest-pinned image snapshot; see sdk-packages.txt." \
               "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             date -u '+Build time: %Y-%m-%dT%H:%M:%SZ'
             /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc --version | head -n1
