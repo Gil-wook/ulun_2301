@@ -14,7 +14,7 @@ env:
   # Reproduce the current source-side port. These are public source revisions,
   # not console firmware, keys, or credentials.
   SOURCE_REV: 6da94f9164f5fa61380010008270457f95ff4b04
-  ATMOSPHERE_LIBS_REV: cf48d23375cf36742876f4b014971b2ebabc6dc8
+  ATMOSPHERE_LIBS_REV: aae2da0155a490abd3bfd17a70ccd16bb73c916a
   LIBNX_REV: b156b4774fb2df7b93402169509266da7547fc4c
   SDL2_RECIPE_REV: 0ae8790f6e092cf8df937d143e70a785f7e27997
   GIT_TERMINAL_PROMPT: "0"
@@ -215,7 +215,7 @@ jobs:
           {
             printf '%s\n' \
               "UNOFFICIAL uLaunch 1.2.6 development build" \
-              "Target: firmware 23.0.1 / Atmosphere 1.12.1+" \
+              "Target: firmware 23.0.1 / Atmosphere 1.12.0" \
               "A successful compile does NOT establish console compatibility." \
               "No on-console runtime testing has been performed by this workflow." \
               "Do not overwrite your only SD card backup with this experimental build." \
